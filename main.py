@@ -1,15 +1,16 @@
 # SPDX-License-Identifier: MIT
-"""Copy the finished front-page picture to the grader's output folder.
+"""Deliver the finished front page to the folder the grader reads.
 
-The picture lives in this repository as entry.png: a newspaper front page
-summing up the world news of Friday 20 November 2026, drawn from scratch
-with Python's image library. This program only copies those exact bytes to
-<output>/entry.png, where <output> is MAKEFUN_OUTPUT_DIR when that
-variable is set and /output otherwise.
+The artwork for this entry is the file entry.png sitting next to this
+script: a newspaper front page that rounds up the world news of Friday
+20 November 2026. Running this script places an exact copy of that file
+at <destination>/entry.png, where <destination> comes from the
+MAKEFUN_OUTPUT_DIR environment variable, falling back to /output when
+the variable is absent or empty.
 
-It uses the Python 3.13 standard library alone. It touches no network, reads
-no clock, and reads no file outside this repository, so running it twice
-always writes the same bytes.
+Only the Python 3.13 standard library is involved. Nothing is fetched
+from the network, no clock is consulted, and nothing outside this
+repository is read, so every run produces an identical copy.
 """
 
 import hashlib
@@ -17,63 +18,79 @@ import os
 import sys
 from pathlib import Path
 
-IMAGE_NAME = "entry.png"
-DEFAULT_OUTPUT_DIR = "/output"
+PICTURE_FILENAME = "entry.png"
+OUTPUT_ENV_VAR = "MAKEFUN_OUTPUT_DIR"
+FALLBACK_DESTINATION = "/output"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
-def output_dir() -> Path:
-    chosen = os.environ.get("MAKEFUN_OUTPUT_DIR")
-    return Path(chosen) if chosen else Path(DEFAULT_OUTPUT_DIR)
+def pick_destination() -> Path:
+    """Decide where the copy belongs, honouring the environment first."""
+    requested = os.environ.get(OUTPUT_ENV_VAR)
+    if requested:
+        return Path(requested)
+    return Path(FALLBACK_DESTINATION)
 
 
-def copy_image(source: Path, target: Path) -> int:
-    """Copy the picture and check the copy byte for byte.
+def fingerprint(blob: bytes) -> str:
+    """Return the SHA-256 hex digest of a block of bytes."""
+    return hashlib.sha256(blob).hexdigest()
 
-    Returns the number of bytes written. Exits with an error message when
-    the source is missing, empty, or the copy does not match it exactly.
+
+def place_picture(origin: Path, destination: Path) -> int:
+    """Write an exact copy of the artwork and prove that it matches.
+
+    The byte count of the copy is returned. The run stops with a message
+    on standard error if the artwork is absent, empty, or the copy fails
+    to match the original.
     """
-    if not source.is_file():
-        print(f"error: source image {source} does not exist", file=sys.stderr)
+    if not origin.is_file():
+        print(f"missing artwork: {origin} was not found", file=sys.stderr)
         raise SystemExit(1)
 
-    data = source.read_bytes()
-    if not data:
-        print(f"error: source image {source} is empty", file=sys.stderr)
+    original = origin.read_bytes()
+    if len(original) == 0:
+        print(f"nothing to copy: {origin} holds no data", file=sys.stderr)
         raise SystemExit(1)
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-
-    written = target.stat().st_size
-    if written != len(data):
+    if original[: len(PNG_SIGNATURE)] != PNG_SIGNATURE:
         print(
-            f"error: wrote {written} bytes to {target}, "
-            f"expected {len(data)}",
+            f"not a PNG picture: {origin} lacks the PNG signature",
             file=sys.stderr,
         )
         raise SystemExit(1)
 
-    if hashlib.sha256(target.read_bytes()).hexdigest() != hashlib.sha256(
-        data
-    ).hexdigest():
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(original)
+
+    duplicate = destination.read_bytes()
+    if len(duplicate) != len(original):
         print(
-            f"error: bytes written to {target} differ from source",
+            f"copy size mismatch: {destination} holds {len(duplicate)} bytes,"
+            f" expected {len(original)}",
             file=sys.stderr,
         )
         raise SystemExit(1)
 
-    return written
+    if fingerprint(duplicate) != fingerprint(original):
+        print(
+            f"copy mismatch: {destination} differs from {origin}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    return len(duplicate)
 
 
-def main() -> int:
-    here = Path(__file__).resolve().parent
-    source = here / IMAGE_NAME
-    target = output_dir() / IMAGE_NAME
+def run() -> int:
+    folder = Path(__file__).resolve().parent
+    picture = folder / PICTURE_FILENAME
+    goal = pick_destination() / PICTURE_FILENAME
 
-    written = copy_image(source, target)
-    print(f"wrote {target} ({written} bytes)")
+    total = place_picture(picture, goal)
+    print(f"copied {goal} ({total} bytes)")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run())
